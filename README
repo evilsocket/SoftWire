@@ -1,0 +1,12 @@
+SoftWire is a class library written in object-oriented C++ for compiling assembly code. 
+It can be used in projects to generate x86 machine code at run-time as an alternative to self-modifying code. 
+Scripting languages might also benefit by using SoftWire as a JIT-compiler back-end. 
+It also allows to eliminate jumps for variables which are temporarily constant during run-time, 
+like for efficient graphics processing by constructing an optimised pipeline. 
+Because of its possibility for 'instruction rewiring' by run-time conditional compilation, 
+I named it "SoftWire". 
+It is targeted only at developers with a good knowledge of C++ and x86 assembly.
+
+Project originally by Nicolas Capens, new implementation by Simone Margaritelli aka evilsocket
+
+SEE doc/*.html FOR THE COMPLETE DOCUMENTATION

@@ -1,0 +1,753 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.0 Transitional//EN">
+<html><head>
+	<meta http-equiv="CONTENT-TYPE" content="text/html; charset=windows-1252">
+	
+	<title>SoftWire - Tutorial</title><meta name="GENERATOR" content="OpenOffice.org 2.0  (Win32)">
+	<meta name="CREATED" content="20060513;15352553">
+	<meta name="CHANGED" content="16010101;0"></head>
+
+<body dir="ltr" lang="en-US">
+<div id="pagecell1" dir="ltr">
+	<div id="content" dir="ltr">
+		<p align="justify"><strong><u>Overview</u></strong></p>
+		<p align="justify">SoftWire is a run-time x86 assembler. This makes
+		it useful for a compiler's code generator, a JIT-compiler for
+		scripting languages, or for eliminating branches in tight inner
+		loops. In this tutorial we will focus on SoftWire's use&nbsp;for a
+		compiler back-end.</p>
+		<p align="justify">Normally, writing a back-end for a compiler that
+		targets x86 processors requires good knowledge of machine code.
+		With the features offered by the SoftWire library this is not
+		required. All that needs to be done is translating the intermediate
+		code to x86 assembly instructions. SoftWire does all the rest, like
+		register allocation, for you. Writing a peephole optimizer can also
+		be done at the same time.</p>
+		<p align="justify">One thing we won't use in this tutorial is
+		SoftWire's build in assembly parser.&nbsp;It allows you to take an
+		Intel-like syntax source file as input. Here we won't take that
+		detour but generate the code directly. As we'll see this has great
+		advantages. Nevertheless, SoftWire can generate a listing file of
+		the assembly code, which can be re-assembled.</p>
+		<p align="justify">This tutorial is targeted at Windows applications
+		and assumes the Visual C++ .NET compiler. However, SoftWire should
+		be operating-system and compiler independent. The only restriction
+		is the x86 architecture. Good knowledge of x86 assembly is assumed.</p>
+		<p align="justify"><strong><u>The CodeGenerator Class</u></strong></p>
+		<p align="justify">The main class we'll use is <font face="Courier New">CodeGenerator</font><font face="Times New Roman">.
+		It is defined in the <em>CodeGenerator.hpp</em> file which we have
+		to include. All of SoftWire is in the&nbsp;<font face="Courier New">SoftWire</font>
+		namespace so our heading will look like this:</font></p>
+		<dl>
+			<dd style="text-align: justify;"><font face="Courier New, monospace"><font color="#0000ff">#include</font>
+			"CodeGenerator.hpp"</font></dd><dd style="margin-bottom: 0.2in; text-align: justify;">
+			<font face="Courier New, monospace"><font color="#0000ff">using
+			namespace</font> SoftWire;</font></dd></dl>
+		<p align="justify">
+		The <font face="Courier New">CodeGenerator </font>class can be
+		constructed without arguments.</p>
+		<dl>
+			<dd style="margin-bottom: 0.2in; text-align: justify;"><font face="Courier New">CodeGenerator
+			x86;</font></dd></dl>
+		<p align="justify">
+		Using the class happens in two phases. First the assembly code
+		sequence is produced, and then it is translated to binary format
+		and loaded into memory so it is ready to be called. Don't worry if
+		that's not clear right now, just read on. Let's first focus on how
+		to&nbsp;produce the code.</p>
+		<p align="justify"><strong><u>Run-Time Intrinsics</u></strong></p>
+		<p align="justify">Producing&nbsp;the code is done through the use of
+		run-time intrinsics. These are functions with the same name as x86
+		instructions. Whenever such a function is called, SoftWire will
+		store this in a buffer which is later used to translate to binary
+		format&nbsp;and load it. Here's a simple example of the use of
+		run-time intrinsics:</p>
+		<dl>
+			<dd style="margin-bottom: 0.2in; text-align: justify;"><font face="Courier New">x86.add(eax,
+			ebx);</font></dd></dl>
+		<p align="justify">
+		As you can see this resembles the Intel assembly syntax a lot. All
+		registers are usable just like that. It is important to note that
+		this does not execute the add instruction yet. It is not in any way
+		related to inline assembly or compile-time intrinsics.&nbsp;Also,
+		the registers you use here are not the real ones you see in the
+		debug window. We'll get back to this later.</p>
+		<p align="justify">Note the <font face="Courier New">x86.</font> at
+		the start of the line. This is of course the <font face="Courier New">CodeGenerator</font>
+		we constructed above. For one instruction it's not a problem to
+		write this, but usually we'd like to translate dozens of
+		intermediate code instructions so it becomes annoying. If however
+		we derive our compiler from <font face="Courier New">CodeGenerator</font>,
+		we can omit the <font face="Courier New">x86</font>. I will assume
+		this for the rest of the tutorial.</p>
+		<p align="justify">The syntax to use memory operands also resembles
+		Intel syntax a lot. An example:</p>
+		<dl>
+			<dd style="margin-bottom: 0.2in;"><font face="Courier New">mov(eax,
+			dword_ptr [esp+4*edx]);</font></dd></dl>
+		<p align="justify">
+		This syntax is possible thank to the use of operator overloading.
+		Note that <font face="Courier New">dword_ptr</font> requires an
+		underscore in the middle. The above example references the stack.
+		Using static memory is just as easy:</p>
+		<dl>
+			<dd><font face="Courier New"><font color="#0000ff">static&nbsp;char</font>&nbsp;data;</font>
+						</dd><dd style="margin-bottom: 0.2in;">
+			<font face="Courier New">mov(byte_ptr [&amp;data], cl);</font></dd></dl>
+		<p align="justify">
+		Note the use of the&nbsp;address operator. This is necessary
+		because else the value of&nbsp;<font face="Courier New">data</font>
+		would be used, which is not our intention. Remember this because it
+		is a common error. The address is not taken implicitly because more
+		often you will use pointers.</p>
+		<p align="justify">It&nbsp;is important to know how
+		run-time&nbsp;intrinsics are implemented, in case you would want to
+		modify or extend it, or want to track a bug. They are defined in
+		<font face="Courier New">CodeGenerator</font>'s base class,
+		<font face="Courier New">Assembler</font>. Because there are so
+		many run-time intrinsics, they are separated from the <em>Assembler.hpp</em>
+		header in <em>Intrinsics.hpp</em>, which then gets included in
+		<font face="Courier New">Assembler</font>'s class body.</p>
+		<p align="justify">The <em>Intrinsics.hpp</em> file&nbsp;was
+		generated automatically from the x86 instruction set. For every
+		possible combination of arguments the functions are overloaded.
+		They pass the instruction's ID number and the arguments to a
+		private <font face="Courier New">Assembler</font> member function
+		which stores the information in a buffer. This method ensures all
+		syntax checking is done by the C++ compiler. The only exception is
+		the scale in a memory reference.</p>
+		<p align="justify"><strong><u>Executing Your Code</u></strong></p>
+		<p align="justify">Now that you know how to create some basic code,
+		let's see how we can load it into memory and call it. The only
+		method we need is <font face="Courier New">callable</font>. It
+		requires no arguments, and returns a pointer to the loaded code.
+		The type of this pointer is a function that takes no arguments and
+		returns void. Often the code you produced is the same kind of
+		function, so it can be called directly like this:</p>
+		<dl>
+			<dd style="margin-bottom: 0.2in;"><font face="Courier New">callable()();</font></dd></dl>
+		<p align="justify">
+		Note the double parenthesis. The first is for calling the <font face="Courier New">callable</font>
+		method, the second if for calling the function pointer returned by
+		<font face="Courier New">callable</font>. In case your produced
+		code accepts arguments or returns a value, you have to cast the
+		function pointer to the correct type. For example if the code takes
+		two integers and returns one character:</p>
+		<dl>
+			<dd style="margin-bottom: 0.2in;"><font color="#0000ff">char</font>&nbsp;(*script)(<font color="#0000ff">int</font>,
+			<font color="#0000ff">int</font>) = (<font color="#0000ff">char</font>
+			(*)(<font color="#0000ff">int</font>, <font color="#0000ff">int</font>))callable();
+						</dd></dl>
+		<p align="justify">
+		Here I've named generated function <font face="Courier New">script</font>,
+		which can be called at any time as long as the <font face="Courier New">CodeGenerator</font>
+		instance is not destroyed. For some reasons though, you&nbsp;might
+		want&nbsp;to keep the function even if the class is destroyed. This
+		can be accomplished with the <font face="Courier New">acquire</font>
+		method. It hands the task of deallocating the function over to you
+		by returning a pointer to it. Beware that this is&nbsp;mostly not
+		the pointer returned by <font face="Courier New">callable</font>.</p>
+		<p align="justify">Another&nbsp;method for controlling memory usage
+		is <font face="Courier New">finalize</font> . As it name implies,
+		it deallocates any temporary memory and prevents you from producing
+		extra code. It is advised to call this method after all code has
+		been produced. Only call the method when absolutely needed. It
+		minimizes the footprint of the <font face="Courier New">CodeGenerator</font>
+		class, but for the next use it will have to be re-initialized,
+		which requires some time.</p>
+		<p align="justify">Note that the standard calling convention is used
+		(<font face="Courier New"><font color="#0000ff">__cdecl</font></font>),
+		so the produced assembly code should also use the convention. Other
+		calling conventions can be used by&nbsp;specifying the <font face="Courier New"><font color="#0000ff">__fastcall</font></font>
+		or&nbsp;<font face="Courier New"><font color="#0000ff">__stdcall</font></font>
+		keyword. 
+		</p>
+		<p align="justify"><strong><u>Jumps and Calls</u></strong></p>
+		<p align="justify">Now that we've seen the basics of what run-time
+		intrinsics are, how to produce code with them and call it, let's
+		take a look at their more advanced uses.</p>
+		<p align="justify">The simplest branching instruction is <font face="Courier New">jmp</font>.
+		It takes an integer as argument, which is a relative offset
+		indicating how many bytes to jump ahead. This is of course not
+		handy to work with. Therefore we also have named labels. They can
+		be created with the <font face="Courier New">label</font> run-time
+		intrinsic and use a string as argument. The <font face="Courier New">jmp</font>
+		can then use this string to reference the label:</p>
+		<dl>
+			<dd><font face="Courier New">label("target");</font> 
+			</dd><dd style="margin-bottom: 0.2in;">
+			<font face="Courier New">jmp("target");</font></dd></dl>
+		<p align="justify">
+		<font face="Courier New"><font face="Times New Roman">You can place
+		a label anywhere between run-time intrinsics. Since we're still
+		writing C++ you can choose whatever method you prefer to store the
+		label names. They can easily be places in a symbol table like
+		structure.</font> </font>
+		</p>
+		<p align="justify">Calls can be&nbsp;done exactly the same way. Place
+		a label before the function and use the label name in the <font face="Courier New">call</font>
+		run-time intrinsic. A fantastic feature is that you can share all
+		data declared in C++,&nbsp;so also functions!&nbsp;For example
+		calling the <font face="Courier New">printf</font> function can be
+		done this way:</p>
+		<dl>
+			<dd style="text-align: justify;"><font face="Courier New"><font color="#0000ff">#include</font>
+			"stdio.h"</font></dd><dd style="text-align: justify;">
+			<font face="Courier New">...</font></dd><dd style="margin-bottom: 0.2in; text-align: justify;">
+			<font face="Courier New">call((<font color="#0000ff">int</font>)printf);</font></dd></dl>
+		<p align="justify">
+		The cast to <font face="Courier New">int </font><font face="Times New Roman">is
+		required because else&nbsp;<font face="Courier New">printf</font>,
+		which is a pointer to the function, would be interpreted as an
+		address where the pointer is stored. This is caused by the
+		limitations of run-time intrinsics and C++ implicit casting. So
+		it's just something you have to remember.</font></p>
+		<p align="justify"><strong><u>Complete&nbsp;Example</u></strong></p>
+		<p align="justify">With the above introduction you should be able to
+		understand following compilable example:</p>
+		<dl>
+			<dd style="text-align: left;"><font face="Courier New"><font color="#0000ff">#include</font>
+			"CodeGenerator.hpp"</font></dd><dd style="text-align: left;">
+			<font face="Courier New"><font color="#0000ff">using namespace</font>
+			SoftWire;</font></dd><dd style="text-align: left;">
+			&nbsp;</dd><dd style="text-align: left;">
+			<font face="Courier New"><font color="#0000ff">#include</font>
+			&lt;stdio.h&gt;</font></dd><dd style="text-align: left;">
+			&nbsp;</dd><dd style="text-align: left;">
+			<font face="Courier New"><font color="#0000ff">class</font> Script
+			: <font color="#0000ff">public</font> CodeGenerator</font></dd><dd style="text-align: left;">
+			<font face="Courier New">{</font></dd><dd style="text-align: left;">
+			<font face="Courier New"><font color="#0000ff">public</font>:</font></dd><dl>
+				<dd style="text-align: left;">
+				<font face="Courier New"><font color="#0000ff">void</font>
+				compile()</font></dd><dd style="text-align: left;">
+				<font face="Courier New">{</font></dd><dl>
+					<dd style="text-align: left;">
+					<font face="Courier New"><font color="#0000ff">static char</font>
+					*string = "Hello world!";</font></dd><dd style="text-align: left;">
+					&nbsp;</dd><dd style="text-align: left;">
+					<font face="Courier New">push((<font color="#0000ff">int</font>)string);</font></dd><dd style="text-align: left;">
+					<font face="Courier New">call((<font color="#0000ff">int</font>)printf);</font></dd><dd style="text-align: left;">
+					<font face="Courier New">add(esp, 4);</font></dd><dd style="text-align: left;">
+					<font face="Courier New">ret();</font></dd></dl>
+				<dd style="text-align: left;">
+				<font face="Courier New">} </font>
+				</dd></dl>
+			<dd style="text-align: left;">
+			<font face="Courier New">}; </font>
+			</dd><dd style="text-align: left;">
+			&nbsp;</dd><dd style="text-align: left;">
+			<font face="Courier New"><font color="#0000ff">void</font> main()</font></dd><dd style="text-align: left;">
+			<font face="Courier New">{</font></dd><dl>
+				<dd style="text-align: left;">
+				<font face="Courier New">Script script;</font></dd><dd style="text-align: left;">
+				&nbsp;</dd><dd style="text-align: left;">
+				<font face="Courier New">script.compile();</font></dd><dd style="text-align: left;">
+				<font face="Courier New">script.callable()();</font></dd></dl>
+			<dd style="margin-bottom: 0.2in; text-align: left;">
+			<font face="Courier New">}</font></dd></dl>
+		<p align="justify">
+		The cast to <font face="Courier New"><font color="#0000ff">int</font>
+		</font><font face="Times New Roman">for the <font face="Courier New">push</font>
+		intrinsic is required because else&nbsp;<font face="Courier New">"Hello
+		world!"</font> is interpreted as a label name! Again this is a
+		situation where a compromise was made. Easy of use for labels is
+		prioritized so don't make this mistake. The easiest way to remember
+		this is that assembly is typeless, so pointers are treated like any
+		other integer.</font></p>
+		<p align="justify">Study the execution of this example, by placing a
+		breakpoint at the <font face="Courier New">callable</font>. Step
+		into it, immediately step out of it, and then go to the disassembly
+		window by pressing Alt+8. Step further into the generated code. The
+		Visual C++ debugger even recognises the <font face="Courier New">printf</font>
+		pointer! 
+		</p>
+		<p align="justify"><strong><u>Conditional Compilation</u></strong></p>
+		<p align="justify">The above example doesn't have much practical use.
+		It's just a very laborious way of printing "Hello world!".
+		But it is the basics of a compiler back-end since it is generated
+		at run-time.</p>
+		<p align="justify">As noted many times before, run-time intrinsics
+		are still standard C++. They are just functions that register the
+		instruction&nbsp;mnemonic and operands. This gives us a lot of
+		freedom in how we manipulate and use them. In this section we will
+		discuss conditional compilation, and in the next we will discuss
+		register allocation.</p>
+		<p align="justify">Conditional compilation is not a real compiler
+		technique, but it is a nice application of run-time intrinsics that
+		shows their real strength. It has a lot in common with
+		self-modifying code, but it is much more convenient and
+		powerful.&nbsp;The idea is simple, based on one or more parameters
+		a run-time intrinsic is executed or not:</p>
+		<dl>
+			<dd style="text-align: justify;"><font face="Courier New"><font color="#0000ff">if</font>(condition)</font></dd><dd style="text-align: justify;">
+			<font face="Courier New">{</font></dd><dl>
+				<dd style="text-align: justify;">
+				<font face="Courier New">imul(ebx, edx);</font></dd></dl>
+			<dd style="margin-bottom: 0.2in; text-align: justify;">
+			<font face="Courier New">}</font></dd></dl>
+		<p align="justify">
+		This is especially useful for optimizing code. A mispredicted jump
+		instruction costs dozens of clock cycles. Even highly predictable
+		compare and jump instructions&nbsp;can take a considerable amount
+		of total execution time. They also put extra stress on instruction
+		caches.&nbsp;Especially in inner loops this can be unacceptable. If
+		however the result of the compare instructions is known some time
+		beforehand, these instructions could be eliminated...</p>
+		<p align="justify"><font face="Times New Roman">This is nearly
+		impossible with pre-compiled code, but very easy with run-time
+		compiled or assembled code by using conditional compilation.&nbsp;An
+		extra&nbsp;advantage of&nbsp;run-time intrinsics&nbsp;is that it is
+		fast. Parsing and syntax checking is already done by the C++
+		compiler. So all that needs to be done at run-time is generating
+		the machine code, and SoftWire is&nbsp;quite efficient at this.</font></p>
+		<p align="justify">An example of this is supporting multiple
+		processors. You might have optimized code for Intel's SSE or for
+		AMD's 3DNow! extensions. The common method to deal with this is to
+		check the compiler type at run-time, and use a conditional
+		statement to decide what code to execute. This is not optimal since
+		the processor type does not change, but having two or more
+		executables isn't economical either. Conditional compilation solves
+		this at the heart of the problem, by selecting exactly those
+		instructions that need to be executed.</p>
+		<p align="justify"><strong><u>Register Allocation</u></strong></p>
+		<p align="justify">The concept of conditional compilation is already
+		one step closer to the creation of a compiler back-end, but we're
+		not finished yet. A back-end takes intermediate code as input,
+		which is often in the form of three-address statements. The x86
+		processor however does not have instructions that match these
+		statements, but most of the time rather works with registers and
+		stack variables. Obviously we would like to use the registers as
+		much as possible since this is much faster than working with the
+		memory all the time.</p>
+		<p align="justify">The hard way to solve this is to keep information
+		about whether a variable is stored in&nbsp;global memory, on the
+		stack&nbsp;or in a register in the symbol table.&nbsp;This method
+		is&nbsp;hard to work with, and would require a lot of complex
+		conditional compilation constructions. What we really need is an
+		abstraction of register allocation.</p>
+		<p align="justify">The flexibility of run-time intrinsics again makes
+		this possible. Imagine we had a function <font face="Courier New">r32</font>
+		<font face="Times New Roman">which took a memory reference as
+		argument and returns a register corresponding with that variable.
+		This would solve most of our problems. A trivial implementation
+		of&nbsp;<font face="Courier New">r32</font> would be to use the </font><font face="Courier New">mov
+		</font><font face="Times New Roman">run-time intrinsic to load the
+		variable from memory into a certain register. Obviously this
+		doesn't win us anything but it's already the first step towards
+		automatic register allocation because now we only have to work with
+		the memory references, whether they are&nbsp;global or on the
+		stack.</font></p>
+		<p align="justify">A first optimization of&nbsp;<font face="Courier New"><font face="Courier New">r32</font>
+		</font>is not to re-load it if it already stores the
+		variable&nbsp;pointed to by&nbsp;the memory reference. Next is to
+		use all available registers, except esp and ebp because they
+		represent the stack. When we're out of registers, we have to write
+		one back to memory and overwrite it with the new data. This is
+		called register spilling, and can happen fully automatically. A
+		priority system can decide which register is the best candidate for
+		spilling.</p>
+		<p align="justify">This is exactly how SoftWire's register allocator
+		works. No more worrying about what variable is stored in which
+		register, it's all handled automatically and as optimal as
+		possible. Let's look at an example to see how it works in practice:</p>
+		<dl>
+			<dd style="text-align: justify;"><font face="Courier New">add(r32(esp+0),
+			r32(esp+8));</font></dd><dd style="text-align: justify;">
+			<font face="Courier New">adc(r32(esp+4), r32(esp+12));</font></dd><dd style="text-align: justify;">
+			<font face="Courier New">mov(dword_ptr [esp+16], r32(esp+0));</font></dd><dd style="margin-bottom: 0.2in; text-align: justify;">
+			<font face="Courier New">mov(dword_ptr [esp+20], r32(esp+4));</font></dd></dl>
+		<p align="justify">
+		This is a typical 64-bit addition with all operands on the stack.
+		Note that nowhere we explicitly used a register. But since the&nbsp;<font face="Courier New"><font face="Courier New">r32</font>
+		</font>function itself is implemented using run-time intrinsics the
+		code that is produced might look like this:</p>
+		<dl>
+			<dd style="text-align: justify;"><font face="Courier New">mov eax,
+			dword ptr [esp+0]</font></dd><dd style="text-align: justify;">
+			<font face="Courier New">mov ebx, dword ptr [esp+8]</font></dd><dd style="text-align: justify;">
+			<font face="Courier New">add eax, ebx</font></dd><dd style="text-align: justify;">
+			<font face="Courier New">mov ecx, dword ptr [esp+4]</font></dd><dd style="text-align: justify;">
+			<font face="Courier New">mov edx, dword ptr [esp+12]</font></dd><dd style="text-align: justify;">
+			<font face="Courier New">adc ecx, edx</font></dd><dd style="text-align: justify;">
+			<font face="Courier New">mov dword ptr [esp+16], eax</font></dd><dd style="margin-bottom: 0.2in; text-align: justify;">
+			<font face="Courier New">mov dword ptr [esp+20], edx</font></dd></dl>
+		<p align="justify">
+		If there were not enough unused registers available there would
+		also be some spilling code. You can notice a slight inefficiency in
+		the above code. Since, in this example, the data in <font face="Courier New">ebx</font>
+		and <font face="Courier New">edx</font>&nbsp;is not reused, we
+		could have added directly from memory. This would save us two
+		instructions and kept more register available. For this purpose
+		SoftWire also has a&nbsp;<font face="Courier New">m32</font>
+		function. If the data is already in a register, it returns the
+		register, else it returns the memory reference. This corresponds
+		closely to the <em>r/m32</em> symbol in the Intel instruction set
+		reference.</p>
+		<p align="justify">There is also another situation where the use
+		of&nbsp;<font face="Courier New">r32</font> is sub-optimal. Some
+		instructions, like <font face="Courier New">mov</font>, do not
+		operate on the destination operand, but completely overwrite its
+		previous value. Using <font face="Courier New">r32</font>&nbsp;for
+		the destination operand introduces a useless&nbsp;load operation.
+		For this situation the x<font face="Courier New">32</font>&nbsp;function
+		is more optimal. It assigns a register to a memory reference but
+		does not copy its data into this register. So an assignment
+		operation will look like this:</p>
+		<dl>
+			<dd style="margin-bottom: 0.2in; text-align: justify;"><font face="Courier New">mov(x32(var1),
+			m32(var2));</font></dd></dl>
+		<p align="justify">
+		Often when translating intermediate code, you will need temporary
+		registers. Using <font face="Courier New">x32</font>&nbsp;can be
+		awkward because it requires a memory reference where the register
+		value could be stored should it be spilled. For these temporaries
+		you would also&nbsp;prefer that they never get spilled. For this
+		purpose there is the&nbsp;<font face="Courier New">t32</font>
+		function. It works like&nbsp;<font face="Courier New">x32</font>
+		but takes an index as argument. This index can only be 0 to 5,
+		since <font face="Courier New">t32</font>&nbsp;directly represents
+		a physical register that never gets spilled. How to free it again
+		will be explained in the next section.</p>
+		<p align="justify">Use this&nbsp;function with care. If you use
+		up&nbsp;too many&nbsp;physical registers, and then try to use the
+		other register allocation functions, the register allocator will
+		fail and throw an error. So try to use <font face="Courier New">t32</font>&nbsp;as
+		little as possible. An alternative is to have static locations that
+		you can use together with x<font face="Courier New">32</font> <font face="Times New Roman">to
+		use for the temporary variables. This makes the registers spillable
+		and avoid running out of registers. The <font face="Courier New">t32</font>&nbsp;function
+		is only for convenience when just a few temporary registers are
+		required which should not be spilled. Free them as soon as possible
+		as explained in the next section.</font></p>
+		<p align="justify">SoftWire does not only do automatic register
+		allocation for 32-bit general purpose registers, but also for
+		64-bit MMX and 128-bit SSE registers. For&nbsp;MMX registers you
+		can use the <font face="Courier New">r64</font>, <font face="Courier New">x64</font>,
+		<font face="Courier New">m64</font> and <font face="Courier New">t64</font>
+		functions. For&nbsp;SSE registers you can use the <font face="Courier New">r128</font>,
+		<font face="Courier New">x128</font>, <font face="Courier New">m128</font>
+		and <font face="Courier New">t128</font> functions. Unlike for
+		general purpose registers where esp and ebp are never used by the
+		register allocator, for MMX and SSE all eight registers are used.
+		So for the <font face="Courier New">t64</font> and <font face="Courier New">t128</font>
+		functions the index can go from 0 to 7.</p>
+		<p align="justify"><strong><u>Manual Spilling and&nbsp;Freeing</u></strong></p>
+		<p align="justify">Some instructions require specific registers as
+		operands.&nbsp;Generally these kind of instructions should be
+		avoided, but sometimes there is no alternative. When using
+		automatic register allocation, this register is most probably used
+		for another variable. The solution is to force that particular
+		register to be spilled. Also when attempting to use 8-bit or 16-bit
+		registers a similar approach must be followed. For example the <font face="Courier New">mul</font>
+		instruction implicitly used <font face="Courier New">eax</font>
+		as&nbsp;first operand, so it must be written back to memory: 
+		</p>
+		<dl>
+			<dd style="margin-bottom: 0.2in; text-align: justify;"><font face="Courier New">spill(eax);</font></dd></dl>
+		<p align="justify">
+		Even though the priority mechanism produces code with very little
+		spills, it isn't optimal. The problem is that it cannot look ahead.
+		For example, some registers might become available&nbsp;in
+		the&nbsp;following&nbsp;instructions because their associated
+		variable isn't used any more. So these are the best candidates for
+		the next spill. But if this register was used frequently then the
+		priority mechanism attempts to preserve it as long as possible. To
+		give the register allocator a help you can free registers
+		explicitly:</p>
+		<dl>
+			<dd style="text-align: justify;"><font face="Courier New">free(eax);</font></dd><dd style="margin-bottom: 0.2in; text-align: justify;">
+			<font face="Courier New">free(esp+0);</font></dd></dl>
+		<p align="justify">
+		The second line frees the register associated with the variable at
+		<font face="Courier New">esp+0</font>, if any. Note that the <font face="Courier New">+0</font>
+		makes is a memory reference instead of a register.&nbsp;As soon as
+		you know that a certain variable is not used any more, you can use
+		its memory reference to free its register. The difference with
+		spilling is that a spill writes back the content of the register to
+		memory so the variable can be used further. A free only makes the
+		register available again for allocation.</p>
+		<p align="justify">Also for control transfer, explicit spilling and
+		freeing is required. Let's take for example a conditional block.
+		Inside the block certain registers might get spilled, which might
+		cause variables to switch register. However, this happens
+		conditionally at run-time, so the variable could falsely be
+		expected in another register. To prevent this, explicit spilling
+		(or freeing) of all registers is required. There are <font face="Courier New">spillAll</font>
+		and <font face="Courier New">freeAll</font> methods provided. 
+		</p>
+		<p align="justify">Note that this is not ideal. In code with lots of
+		small basic blocks, it might generate a lot of load operations at
+		the begin and a lot of store operations at the end. Peephole
+		optimization techniques could optimize this but there are other
+		alternatives. This is a situation where <font face="Courier New">t32</font>&nbsp;can
+		be very useful since its register can't be spilled. So for short
+		control statements a few variables could be stored in fixed
+		registers. An example is a loop counter. Again keep in mind that
+		they have to be freed manually afterwards.</p>
+		<p align="justify"><strong><u>Instruction Selection</u></strong></p>
+		<p align="justify">You should now be able to write the instruction
+		selection phase yourself using conditional compilation and
+		automatic register allocation. But let's look at some example
+		implementations to get your started and point out some pitfalls.
+		We've already partially seen the assignment intermediate
+		instruction:</p>
+		<dl>
+			<dd style="text-align: justify;"><font face="Courier New"><font color="#0000ff">void</font>
+			emitAssign(<font color="#0000ff">const</font> OperandREF &amp;lhs,
+			<font color="#0000ff">const</font> OperandREF &amp;rhs)</font></dd><dd style="text-align: justify;">
+			<font face="Courier New">{</font></dd><dl>
+				<dd style="text-align: justify;">
+				<font face="Courier New">mov(x32(lhs), m32(rhs));</font></dd></dl>
+			<dd style="margin-bottom: 0.2in; text-align: justify;">
+			<font face="Courier New">}</font></dd></dl>
+		<p align="justify">
+		The <font face="Courier New">OperandREF</font> type is a general
+		reference, so it normally also corresponds with the information you
+		have stored in the symbol table. This is a two argument
+		intermediate code, but most operations are of the form <font face="Courier New">a
+		:= b op c</font>, with <font face="Courier New">op</font> being an
+		arithmetic or logical operation. For example a&nbsp;divide
+		operation could be done like this:</p>
+		<dl>
+			<dd style="text-align: left;"><font face="Courier New"><font color="#0000ff">void</font>
+			emitSignedDivide(<font color="#0000ff">const</font> OperandREF
+			&amp;lhs,</font></dd><dd style="text-align: left;">
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+<font face="Courier New"><font color="#0000ff">const</font>
+			OperandREF &amp;op1, <font color="#0000ff">const</font> OperandREF
+			&amp;op2)</font></dd><dd style="text-align: left;">
+			<font face="Courier New">{</font></dd><dl>
+				<dd style="text-align: left;">
+				spill(eax);</dd><dd style="text-align: left;">
+				mov(eax, r32(op1));</dd><dd style="text-align: left;">
+				spill(edx);</dd><dd style="text-align: left;">
+				cdq();</dd><dd style="text-align: left;">
+				idiv(m32(op2));</dd><dd style="text-align: left;">
+				mov(m32(lhs), eax);</dd></dl>
+			<dd style="margin-bottom: 0.2in; text-align: left;">
+			<font face="Courier New">}</font></dd></dl>
+		<p align="justify">
+		Note how tricky this code is. The <font face="Courier New">m32</font>
+		in the&nbsp;<font face="Courier New">idiv</font> instruction can't
+		be replaced by a <font face="Courier New">r32</font>. That is
+		because it could allocate <font face="Courier New">op2</font> to
+		<font face="Courier New">eax</font> or <font face="Courier New">edx</font>.
+		Remember that <font face="Courier New">m32</font> never does an
+		allocation. Just as an exercise, how could we put <font face="Courier New">op2</font>
+		in a register? One option would be to call <font face="Courier New">r32(op2)</font>
+		before the spills. This increases the chance that <font face="Courier New">op2</font>
+		is in a register but does not guarantee it. To do guarantee it
+		there is no other option than to spill a third register...</p>
+		<p align="justify">Cases like these, where specific registers are
+		required, are rare. But be aware of the pitfalls when you're in
+		such a situation. As a rule of thumb, use <font face="Courier New">m32</font>
+		whenever possible. This also minimizes the number of allocations
+		and spills. In a situation that demands total control over the
+		registers, just <font face="Courier New">spillAll()</font> and use
+		the registers and memory references directly.</p>
+		<p align="justify">Lastly let's look at how to create static data.
+		Although all storage can be allocated in C++, it is mostly&nbsp;more
+		convenient&nbsp;to just store static variables between functions.
+		This is easy thanks to the <font face="Courier New">db</font>, <font face="Courier New">dw</font>
+		and <font face="Courier New">dd</font> run-time intrinsics. To be
+		able to reference the data, a label must&nbsp;be placed:</p>
+		<dl>
+			<dd style="text-align: justify;"><font face="Courier New">OperandREF&nbsp;emitStaticInt(<font color="#0000ff">const
+			char</font> *name)</font></dd><dd style="text-align: justify;">
+			<font face="Courier New">{</font></dd><dl>
+				<dd style="text-align: justify;">
+				<font face="Courier New">label(name);</font></dd><dd style="text-align: justify;">
+				<font face="Courier New">dd();</font></dd><dd style="text-align: justify;">
+				<font face="Courier New"><font color="#0000ff">return
+				</font>OperandREF(name);</font></dd></dl>
+			<dd style="margin-bottom: 0.2in; text-align: justify;">
+			<font face="Courier New">}</font></dd></dl>
+		<p align="justify">
+		<strong><u>Peephole Optimization</u></strong></p>
+		<p align="justify">To a limited extend, SoftWire also allows peephole
+		optimization thanks to conditional compilation. These require a
+		deeper understanding of SoftWire so don't start optimizing
+		prematurely. As a first example, we have a <font face="Courier New">mov</font>
+		to the same register. Although rare, this situation will definitely
+		occur. The divide operation from the previous section has a <font face="Courier New">mov</font>
+		instruction where the source operand could already be in <font face="Courier New">eax</font>
+		because of the register allocator. Optimizing this case can easily
+		be done by overloading the <font face="Courier New">mov</font>
+		run-time intrinsic:</p>
+		<dl>
+			<dd style="text-align: left;"><font face="Courier New"><font color="#0000ff">int</font>&nbsp;mov(OperandREG32
+			reg, OperandR_M32 r_m)</font></dd><dd style="text-align: left;">
+			<font face="Courier New">{</font></dd><dl>
+				<dd style="text-align: left;">
+				<font face="Courier New"><font color="#0000ff">if</font>(r_m.type
+				!= &nbsp;Operand::REG32&nbsp;|| reg.reg != r_m.reg)</font></dd><dd style="text-align: left;">
+				<font face="Courier New">{</font></dd><dl>
+					<dd style="text-align: left;">
+					<font face="Courier New"><font color="#0000ff">return</font>
+					Assembler::mov(r1, r2);</font></dd></dl>
+				<dd style="text-align: left;">
+				<font face="Courier New">}</font></dd></dl>
+			<dd style="margin-bottom: 0.2in; text-align: left;">
+			<font face="Courier New">}</font></dd></dl>
+		<p align="justify">
+		Similar&nbsp;optimizations are arithmetic and logical operations
+		with neutral constants, like a shift by zero bits. Note that when
+		overloading a function, you have to overload all variants. Just
+		take a look at <em>Intrinsics.hpp </em>to know which they are.&nbsp;Also
+		instruction length can be optimized, most notably when using
+		constants:</p>
+		<dl>
+			<dd style="text-align: left;"><font face="Courier New"><font color="#0000ff">int</font>&nbsp;add(OperandREG32
+			reg, <font color="#0000ff">int</font> imm)</font></dd><dd style="text-align: left;">
+			<font face="Courier New">{</font></dd><dl>
+				<dd style="text-align: left;">
+				<font face="Courier New"><font color="#0000ff">if</font>(imm &lt;=
+				127 &amp;&amp; imm &gt;= -128)</font></dd><dd style="text-align: left;">
+				<font face="Courier New">{</font></dd><dl>
+					<dd style="text-align: left;">
+					<font face="Courier New"><font color="#0000ff">return</font>
+					Assembler::add(reg, (<font color="#0000ff">char</font>)imm);</font></dd></dl>
+				<dd style="text-align: left;">
+				<font face="Courier New">}</font></dd><dd style="text-align: left;">
+				&nbsp;</dd><dd style="text-align: left;">
+				<font face="Courier New"><font color="#0000ff">if</font>(reg.type
+				== Operand::EAX)</font></dd><dd style="text-align: left;">
+				<font face="Courier New">{</font></dd><dl>
+					<dd style="text-align: left;">
+					<font face="Courier New"><font color="#0000ff">return</font>
+					Assembler::add(eax, imm);</font></dd></dl>
+				<dd style="text-align: left;">
+				<font face="Courier New">}</font></dd><dd style="text-align: left;">
+				&nbsp;</dd><dd style="text-align: left;">
+				<font face="Courier New"><font color="#0000ff">return</font>
+				Assembler::add(reg, imm);</font></dd></dl>
+			<dd style="margin-bottom: 0.2in; text-align: left;">
+			<font face="Courier New">}</font></dd></dl>
+		<p align="justify">
+		The first variant saves three bytes, the second saves one. There
+		are thousands of these optimizations possible, and they have to be
+		written manually so they are not&nbsp;integrated in SoftWire. To
+		save yourself from drudgery, just analyze which instructions are
+		used most frequently and focus on those.</p>
+		<p align="justify">Working with the FPU isn't advised since its stack
+		architecture doesn't allow simple register management. So you are
+		forced to use the register stack directly and generate rather
+		suboptimal code. Don't even think of trying to mix it with MMX
+		code. But when 3DNow! or SSE are available you can make
+		floating-point operations very efficient and also use MMX without
+		trouble. Just place an <font face="Courier New">emms</font> at the
+		end of your application. So a floating-point multiplication could
+		be done like this:</p>
+		<dl>
+			<dd style="text-align: left;"><font face="Courier New"><font color="#0000ff">void</font>
+			emitFloatMultiply(<font color="#0000ff">const</font> OperandREF
+			&amp;lhs,</font></dd><dd style="text-align: left;">
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+<font face="Courier New"><font color="#0000ff">const</font>
+			OperandREF &amp;op1, <font color="#0000ff">const</font> OperandREF
+			&amp;op2)</font></dd><dd style="text-align: left;">
+			<font face="Courier New">{</font></dd><dl>
+				<dd style="text-align: left;">
+				<font face="Courier New"><font color="#0000ff">if</font>(sseSupport)</font></dd><dd style="text-align: left;">
+				<font face="Courier New">{</font></dd><dl>
+					<dd style="text-align: left;">
+					<font face="Courier New">movss(x128(lhs),
+					(OperandXMM32&amp;)m128(op1));</font></dd><dd style="text-align: left;">
+					<font face="Courier New">mulss(r128(lhs),
+					(OperandXMM32&amp;)m128(op2));</font></dd></dl>
+				<dd style="text-align: left;">
+				<font face="Courier New">}</font></dd><dd style="text-align: left;">
+				<font color="#0000ff"><font face="Courier New">else</font></font></dd><dd style="text-align: left;">
+				<font face="Courier New">{</font></dd><dl>
+					<dd style="text-align: left;">
+					<font face="Courier New">spill(lhs);</font></dd><dd style="text-align: left;">
+					<font face="Courier New">spill(op1);</font></dd><dd style="text-align: left;">
+					<font face="Courier New">spill(op2);</font></dd><dd style="text-align: left;">
+					&nbsp;</dd><dd style="text-align: left;">
+					<font face="Courier New">fld(dword_ptr [op1]);</font></dd><dd style="text-align: left;">
+					<font face="Courier New">fmul(dword_ptr [op2]);</font></dd><dd style="text-align: left;">
+					<font face="Courier New">fstp(dword_ptr [lhs]);</font></dd></dl>
+				<dd style="text-align: left;">
+				<font face="Courier New">}</font></dd></dl>
+			<dd style="margin-bottom: 0.2in; text-align: left;">
+			<font face="Courier New">}</font></dd></dl>
+		<p align="justify">
+		When requiring double-precision floating-point operations, SSE 2
+		can again be a big help, but fall-back paths have to be coded to
+		keep compatibility with older processors.</p>
+		<p align="left"><strong><u>Debugging</u></strong></p>
+		<p align="justify">Run-time generated code can be hard to debug.
+		Therefore several methods can be used to simplify this task.</p>
+		<p align="justify">First of all, as mentioned before, the 'registers'
+		SoftWire uses in its run-time intrinsics are symbols of their own.
+		This gives some trouble when also using inline assembly. Most
+		debuggers like Visual C++ will not show the value of the registers,
+		but the 'registers' defined by SoftWire. Luckily Visual C++ also
+		has a separate register debugging window, which can be invoked by
+		pressing alt+5. Together with alt+8 you'll be able to press these
+		keys blindly after a while. But you should feel lucky that you can
+		analyze your code with this mighty debugger. Code that is not
+		run-time generated or interpreted is generally much harder to
+		debug. 
+		</p>
+		<p align="justify">Using the debugger is not the only way to get a
+		copy of the generated assembly code. SoftWire can also 'echo' the
+		run-time intrinsics, by writing them to a file. The <font face="Courier New">setEchoFile</font>
+		method can be used to specify the file to which they are written.
+		The file can be changed between run-time intrinsics so you can
+		write to different echo files. It uses the standard Intel syntax,
+		and it's compatible with SoftWire's parser, so it can also be used
+		for restoring the code.</p>
+		<p align="justify">Adding your own comments to the echo file&nbsp;can
+		be done with the <font face="Courier New">annotate</font> method.
+		It automatically adds a semicolon and a newline so it will never be
+		read by the parser. It is particularly interesting
+		to&nbsp;write&nbsp;intermediate instruction names, so the code is
+		much easier to read. To debug the automatic register allocation,
+		for example to detect when you should have used <font face="Courier New">r32</font>
+		instead of <font face="Courier New">x32</font>, comments can be
+		placed. For example you could overload <font face="Courier New">x32</font>
+		to see if an allocation happened or not:</p>
+		<dl>
+			<dd style="text-align: left;"><font face="Courier New"><font color="#0000ff">const</font>
+			OperandREG32 &amp;x32(<font color="#0000ff">const</font>
+			OperandREF &amp;ref)</font></dd><dd style="text-align: left;">
+			<font face="Courier New">{</font></dd><dl>
+				<dd style="text-align: left;">
+				<font face="Courier New">if((Operand&amp;)CodeGenerator::m32(ref)
+				!=</font></dd><dd style="text-align: left;">
+				&nbsp;&nbsp; <font face="Courier New">(Operand&amp;)CodeGenerator::x32(ref))</font></dd><dd style="text-align: left;">
+				<font face="Courier New">{</font></dd><dl>
+					<dd style="text-align: left;">
+					<font face="Courier New">annotate("%s allocated to %s",</font></dd><dd style="text-align: left;">
+					&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<font face="Courier New">ref.string(),
+					CodeGenerator::x32(ref).string());</font></dd></dl>
+				<dd style="text-align: left;">
+				<font face="Courier New">}</font></dd><dd style="text-align: left;">
+				&nbsp;</dd><dd style="text-align: left;">
+				<font face="Courier New"><font color="#0000ff">return</font>
+				CodeGenerator::x32(ref);</font></dd></dl>
+			<dd style="margin-bottom: 0.2in; text-align: left;">
+			<font face="Courier New">}</font></dd></dl>
+		<p align="justify">
+		<font face="Times New Roman">Can you figure out why <font face="Courier New">m32</font>
+		is used? Note that it has to be used before <font face="Courier New">x32</font>.
+		For <font face="Courier New">r32</font> you can use the same code
+		because no re-allocations will be made. The <font face="Courier New">string</font>
+		method returns the Intel syntax string for the operand. <font face="Courier New">Annotate</font>
+		accepts a formatted string and a variable number of arguments to
+		make it easier to write any kind of comment.</font></p>
+		<p align="justify"><strong><u>Conclusion</u></strong></p>
+		<p align="justify">Although assembly and code generation is never an
+		easy task, I hope I have convinced you that SoftWire can make it
+		much easier. First and foremost, run-time intrinsics are very
+		convenient to use the complete x86 instruction set and forget about
+		the machine code generation. Conditional compilation and automatic
+		register allocation allow you to directly translate intermediate
+		instructions to x86 instructions. This and the other tools SoftWire
+		provides makes it just as easy to write a JIT-compiler then to
+		write an interpreter.</p>
+		<p>Enjoy!<br><br></p><p>Simone Margaritelli</p>
+ Copyright (C) 2009-2010 Simone Margaritelli -&nbsp;<a href="mailto:evilsocket@gmail.com">evilsocket@gmail.com</a><p><a href="mailto:Nicolas@Capens.net"><br></a></p></div>
+</div>
+</body></html>
