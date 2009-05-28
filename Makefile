@@ -24,7 +24,7 @@ $(OUTPUT): $(OBJECTS)
 	ar rcs $@ *.o
 
 $(TESTAPP): Test.o
-	$(CC) $(CFLAGS) $(SRCDIR)Test.cpp -L$(LIBDIR) -o $@ *.o -lSoftWire
+	$(CC) $(CFLAGS) $(SRCDIR)Test.cpp -L$(LIBDIR) -o $@ *.o -lsoftwire
 
 -include Makefile.dep
 
